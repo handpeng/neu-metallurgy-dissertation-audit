@@ -42,6 +42,26 @@ class InspectDocxTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be a .docx"):
             inspect_docx.inspect(Path("example.doc"))
 
+    def test_definition_marker_and_direct_indentation_are_inventoried(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "definitions.docx"
+            write_docx(
+                path,
+                [
+                    math_paragraph("f_H=w[%H]", "（2.1）"),
+                    text_paragraph("式中，"),
+                    text_paragraph("fH：氢在钢液中的相互作用系数；", left_indent=420, first_line_indent=420),
+                ],
+            )
+            block = inspect_docx.inspect(path)["definition_paragraphs"][0]
+
+            self.assertEqual(block["marker"], "式中")
+            self.assertEqual(block["marker_delimiter"], "，")
+            self.assertEqual(block["same_line_remainder"], "")
+            self.assertEqual(block["associated_formula_paragraph_index"], 1)
+            self.assertEqual(block["following_paragraphs"][0]["indentation"]["left"], "420")
+            self.assertEqual(block["following_paragraphs"][0]["ole_object_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

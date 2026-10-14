@@ -13,6 +13,7 @@ import check_docx  # noqa: E402
 from docx_factory import (  # noqa: E402
     cell_paragraph,
     drawing_paragraph,
+    math_paragraph,
     ole_paragraph,
     section_properties,
     table_xml,
@@ -26,6 +27,7 @@ def arguments(path: Path, **overrides: object) -> argparse.Namespace:
         "docx": path,
         "output": None,
         "legacy_text_rules": False,
+        "legacy_formula_definition_style": False,
         "min_references": None,
         "min_foreign_references": None,
         "keyword_min": None,
@@ -134,6 +136,31 @@ class CheckDocxTests(unittest.TestCase):
             self.assertNotIn("confirmed", wrap["message"].lower())
             self.assertEqual(result["summary"]["layout_finding_count"], len(layout_findings))
             self.assertEqual(sum(result["summary"]["layout_modification_dispositions"].values()), len(layout_findings))
+
+    def test_legacy_formula_definition_style_is_opt_in_and_coverage_is_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "formula-definitions.docx"
+            write_docx(
+                path,
+                [
+                    math_paragraph("f_H=w[%H]", "（2.1）"),
+                    text_paragraph("其中，fH: 氢在钢液中的相互作用系数；"),
+                    text_paragraph("T: 钢液温度，K。", left_indent=0, first_line_indent=0),
+                ],
+            )
+            default = check_docx.run_checks(arguments(path))
+            strict = check_docx.run_checks(arguments(path, legacy_formula_definition_style=True))
+
+            self.assertNotIn("L40", [item["rule_id"] for item in default["findings"]])
+            self.assertEqual(default["formula_coverage"]["definition_style"]["status"], "not-checked")
+            self.assertEqual(default["formula_coverage"]["symbol_definition_closure"]["status"], "manual-review")
+            strict_l40 = [item for item in strict["findings"] if item["rule_id"] == "L40"]
+            self.assertTrue(strict_l40)
+            messages = " ".join(str(item["message"]) for item in strict_l40)
+            self.assertIn("`其中`", messages)
+            self.assertIn("same paragraph", messages)
+            self.assertIn("ASCII colon", messages)
+            self.assertEqual(strict["formula_coverage"]["definition_style"]["status"], "findings")
 
 
 if __name__ == "__main__":

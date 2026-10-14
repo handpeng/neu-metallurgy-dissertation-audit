@@ -14,8 +14,24 @@ WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 
 
-def text_paragraph(text: str) -> str:
-    return f"<w:p><w:r><w:t>{html.escape(text)}</w:t></w:r></w:p>"
+def text_paragraph(
+    text: str,
+    *,
+    left_indent: int | None = None,
+    first_line_indent: int | None = None,
+    hanging_indent: int | None = None,
+) -> str:
+    indentation = ""
+    attributes = []
+    if left_indent is not None:
+        attributes.append(f'w:left="{left_indent}"')
+    if first_line_indent is not None:
+        attributes.append(f'w:firstLine="{first_line_indent}"')
+    if hanging_indent is not None:
+        attributes.append(f'w:hanging="{hanging_indent}"')
+    if attributes:
+        indentation = "<w:pPr><w:ind " + " ".join(attributes) + "/></w:pPr>"
+    return f"<w:p>{indentation}<w:r><w:t>{html.escape(text)}</w:t></w:r></w:p>"
 
 
 def math_paragraph(expression: str, label: str = "") -> str:

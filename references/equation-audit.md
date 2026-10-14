@@ -94,3 +94,21 @@ For every formula finding report:
 - a specific correction that preserves the author's intended mathematics.
 
 At the end, summarize formula coverage by counts of native OMML, OLE, field, plain-text, and image candidates. Explicitly list opaque objects and formulas whose symbols or layout could not be verified.
+
+Use a coverage matrix with one row for each layer below:
+
+| Layer | Minimum evidence |
+| --- | --- |
+| Inventory/object types | Formula representations and inaccessible objects |
+| Numbering | Labels, uniqueness, sequence, and configured number grammar |
+| Cross-references | Detected references resolved against detected labels |
+| Rendering/layout | Rendered centering, number position, clipping, and page breaks |
+| Mathematical typography | Italic/upright semantics, scripts, glyphs, and size |
+| Symbol-definition closure | Equation symbols matched to definitions with case and scripts preserved |
+| `式中` definition style | Selected marker, punctuation, separation, indentation, and symbol delimiters |
+| Units | Quantity-unit notation and definition consistency |
+| Scientific coherence | Dimensions, assumptions, transformations, and applicability |
+
+Each layer must be `passed`, `findings`, `not-checked`, or `manual-review`, with a short evidence statement. `passed` means the layer's applicable scope was actually completed, not merely that an automated helper emitted no finding. In particular, `check_docx.py` and `inspect_tex_equations.py` leave symbol-definition closure, typography, units, rendering, and scientific coherence at `manual-review` unless separate evidence completes them. Never collapse partial structural success into “formulas passed.”
+
+The legacy self-check requests `式中，`, symbol definitions on following indented lines, and a full-width colon or dash after each symbol. Treat this as an opt-in legacy convention until its current authority is confirmed. Even in strict mode, automatic marker and delimiter checks do not establish symbol-definition closure: compare each equation token with its rendered definition block manually or with structure-aware math parsing.

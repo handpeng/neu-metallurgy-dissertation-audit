@@ -415,6 +415,178 @@ def scan_equations(
     return findings
 
 
+def has_direct_indent(indentation: dict[str, object]) -> bool | None:
+    values = [indentation.get("left"), indentation.get("first_line")]
+    if all(value is None for value in values) and indentation.get("hanging") is None:
+        return None
+    for value in values:
+        if value is None:
+            continue
+        try:
+            if int(str(value)) > 0:
+                return True
+        except ValueError:
+            return None
+    return False
+
+
+def scan_formula_definition_style(inspection: dict[str, object]) -> list[dict[str, object]]:
+    """Emit candidates for the opt-in legacy `式中，` definition layout."""
+    findings: list[dict[str, object]] = []
+    for block in inspection["definition_paragraphs"]:
+        index = int(block["paragraph_index"])
+        marker = str(block["marker"])
+        if marker == "其中" and block.get("associated_formula_paragraph_index") is None:
+            continue
+        if (
+            marker == "式中"
+            and block.get("associated_formula_paragraph_index") is None
+            and not re.search(r"[：:—－-]", str(block["same_line_remainder"])[:80])
+        ):
+            continue
+        delimiter = str(block["marker_delimiter"])
+        remainder = str(block["same_line_remainder"])
+        if marker != "式中":
+            findings.append(
+                finding(
+                    "L40", "review", "deterministic",
+                    "The definition block uses `其中` instead of the configured legacy marker `式中，`.",
+                    "Confirm the governing template, then use `式中，` if the legacy rule applies.",
+                    paragraph_index=index, observed=str(block["text"]),
+                )
+            )
+        if delimiter != "，":
+            findings.append(
+                finding(
+                    "L40", "warning", "deterministic",
+                    "The formula-definition marker does not use the configured full-width comma.",
+                    "Use `式中，` when the confirmed legacy rule applies.",
+                    paragraph_index=index, observed=str(block["text"]),
+                )
+            )
+        if remainder:
+            findings.append(
+                finding(
+                    "L40", "warning", "deterministic",
+                    "Definition content appears in the same paragraph as the formula-definition marker.",
+                    "Place symbol definitions in following indented paragraph(s) when the confirmed legacy rule applies.",
+                    paragraph_index=index, observed=str(block["text"]),
+                )
+            )
+
+        following = list(block["following_paragraphs"])
+        if not following:
+            findings.append(
+                finding(
+                    "L40", "review", "manual",
+                    "No following symbol-definition paragraph was associated with this marker.",
+                    "Inspect the rendered page and confirm whether the definitions are present and placed on the next line.",
+                    paragraph_index=index, observed=str(block["text"]), confidence="medium",
+                )
+            )
+            continue
+
+        for definition in following:
+            definition_text = str(definition["text"])
+            definition_index = int(definition["paragraph_index"])
+            if int(definition.get("ole_object_count", 0)):
+                findings.append(
+                    finding(
+                        "L31", "review", "manual",
+                        "A symbol in the definition line is stored in an opaque embedded object.",
+                        "Compare the rendered symbol with the equation; plain-text extraction cannot establish an exact match.",
+                        paragraph_index=definition_index, observed=definition_text,
+                    )
+                )
+            indent_state = has_direct_indent(dict(definition["indentation"]))
+            if indent_state is None:
+                findings.append(
+                    finding(
+                        "L40", "review", "manual",
+                        "Direct indentation is absent; inherited style indentation could not be resolved.",
+                        "Confirm the rendered definition-line indentation or resolve the paragraph style hierarchy.",
+                        paragraph_index=definition_index, observed=definition_text, confidence="medium",
+                    )
+                )
+            elif not indent_state:
+                findings.append(
+                    finding(
+                        "L40", "warning", "deterministic",
+                        "The symbol-definition paragraph has explicit properties but no positive left or first-line indent.",
+                        "Apply the confirmed definition-line indentation and verify it in the target renderer.",
+                        paragraph_index=definition_index, observed=definition_text,
+                    )
+                )
+
+            prefix = definition_text[:80]
+            if re.search(r"^[^：—\n]{1,50}:", prefix):
+                findings.append(
+                    finding(
+                        "L40", "warning", "deterministic",
+                        "A symbol definition uses an ASCII colon instead of a full-width colon or em dash.",
+                        "Replace the symbol delimiter with `：` or `—` after confirming the legacy rule.",
+                        paragraph_index=definition_index, observed=definition_text,
+                    )
+                )
+            elif not re.search(r"^[^：—\n]{0,50}[：—]", prefix):
+                findings.append(
+                    finding(
+                        "L40", "review", "deterministic",
+                        "No full-width colon or em dash was detected after the candidate symbol.",
+                        "Confirm the symbol boundary and use `：` or `—` if this is a definition line.",
+                        paragraph_index=definition_index, observed=definition_text, confidence="medium",
+                    )
+                )
+    return findings
+
+
+def formula_coverage(
+    inspection: dict[str, object], equation_findings: list[dict[str, object]],
+    definition_findings: list[dict[str, object]], strict_definition_style: bool,
+) -> dict[str, dict[str, str]]:
+    numbering_has_findings = any(
+        item["rule_id"] in {"L24", "L29"} and not str(item["message"]).startswith("Equation reference")
+        for item in equation_findings
+    )
+    reference_has_findings = any(
+        str(item["message"]).startswith("Equation reference") for item in equation_findings
+    )
+    inventory = inspection["inventory"]
+    formula_count = sum(
+        int(inventory[key])
+        for key in ("native_omml_equations", "ole_objects", "legacy_eq_fields", "scripted_text_candidates")
+    )
+    if numbering_has_findings:
+        numbering_status = "findings"
+    elif int(inventory["ole_objects"]):
+        numbering_status = "manual-review"
+    elif formula_count and not inspection["equation_numbers"]:
+        numbering_status = "manual-review"
+    else:
+        numbering_status = "passed"
+    definition_status = "not-checked"
+    definition_detail = "Enable --legacy-formula-definition-style only when this legacy rule is applicable."
+    if strict_definition_style:
+        if definition_findings:
+            definition_status = "findings"
+        elif formula_count and not inspection["definition_paragraphs"]:
+            definition_status = "manual-review"
+        else:
+            definition_status = "passed"
+        definition_detail = "Checked marker punctuation, paragraph separation, direct indentation evidence, and symbol delimiters."
+    return {
+        "inventory": {"status": "passed", "detail": "Formula object types and definition-marker candidates were inventoried."},
+        "numbering": {"status": numbering_status, "detail": "Detected labels, duplicates, and configured number delimiters were checked; absent or opaque labels require review."},
+        "cross_references": {"status": "findings" if reference_has_findings else "passed", "detail": "Detected formula references were compared with detected labels; field freshness still requires authoring-application review."},
+        "rendering_layout": {"status": "manual-review", "detail": "Centering, clipping, line breaks, equation-number alignment, and opaque objects require rendered inspection."},
+        "mathematical_typography": {"status": "manual-review", "detail": "Italic/upright semantics, scripts, glyph choice, and formula size were not established automatically."},
+        "symbol_definition_closure": {"status": "manual-review", "detail": "Equation symbols were not semantically matched to definitions; case, scripts, and units require review."},
+        "definition_style": {"status": definition_status, "detail": definition_detail},
+        "units": {"status": "manual-review", "detail": "Units inside equations and definition blocks require semantic review."},
+        "scientific_coherence": {"status": "manual-review", "detail": "Dimensional and mathematical correctness were not established."},
+    }
+
+
 def scan_references(
     paragraphs: list[dict[str, object]], min_references: int | None, min_foreign: int | None
 ) -> tuple[list[dict[str, object]], dict[str, int | None]]:
@@ -496,7 +668,11 @@ def run_checks(args: argparse.Namespace) -> dict[str, object]:
     paragraphs = load_paragraphs(args.docx)
     findings = scan_text_rules(paragraphs, args.legacy_text_rules)
     findings.extend(scan_caption_sequences(paragraphs))
-    findings.extend(scan_equations(inspection, args.equation_separator, args.equation_parentheses))
+    equation_findings = scan_equations(inspection, args.equation_separator, args.equation_parentheses)
+    findings.extend(equation_findings)
+    strict_definition_style = bool(getattr(args, "legacy_formula_definition_style", False))
+    definition_findings = scan_formula_definition_style(inspection) if strict_definition_style else []
+    findings.extend(definition_findings)
     reference_findings, reference_summary = scan_references(paragraphs, args.min_references, args.min_foreign_references)
     findings.extend(reference_findings)
     keyword_summary = inspect_keywords(paragraphs)
@@ -509,6 +685,7 @@ def run_checks(args: argparse.Namespace) -> dict[str, object]:
         "input": str(args.docx.resolve()),
         "configuration": {
             "legacy_text_rules": args.legacy_text_rules,
+            "legacy_formula_definition_style": strict_definition_style,
             "equation_separator": args.equation_separator,
             "equation_parentheses": args.equation_parentheses,
             "min_references": args.min_references,
@@ -527,6 +704,9 @@ def run_checks(args: argparse.Namespace) -> dict[str, object]:
             "keywords": keyword_summary,
         },
         "inventory": inspection["inventory"],
+        "formula_coverage": formula_coverage(
+            inspection, equation_findings, definition_findings, strict_definition_style
+        ),
         "layout": layout,
         "findings": findings,
         "manual_checks": [
@@ -545,6 +725,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("docx", type=Path, help="DOCX file to check")
     parser.add_argument("--output", type=Path, help="write JSON to this path instead of stdout")
     parser.add_argument("--legacy-text-rules", action="store_true", help="enable adviser-level ppm and range checks")
+    parser.add_argument(
+        "--legacy-formula-definition-style",
+        action="store_true",
+        help="check the legacy `式中，` next-paragraph indentation and symbol-delimiter convention",
+    )
     parser.add_argument("--min-references", type=int, help="confirmed minimum reference count")
     parser.add_argument("--min-foreign-references", type=int, help="confirmed minimum foreign-language reference count")
     parser.add_argument("--keyword-min", type=int, help="confirmed minimum keyword count")

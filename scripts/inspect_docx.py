@@ -126,6 +126,9 @@ def related_objects(element: ET.Element, relationships: dict[str, dict[str, str]
 
 NUMBER_RE = re.compile(r"[（(]\s*(\d+)\s*([.\-\u2013\u2014])\s*(\d+)\s*[）)]")
 REFERENCE_RE = re.compile(r"(?:式|公式)\s*[（(]?\s*(\d+)\s*([.\-\u2013\u2014])\s*(\d+)\s*[）)]?")
+DEFINITION_MARKER_RE = re.compile(
+    r"^[ \t\u3000]*(式中|其中)[ \t\u3000]*([，,:：]?)[ \t\u3000]*(.*)$", re.DOTALL
+)
 
 
 def paragraph_record(index: int, paragraph: ET.Element, relationships: dict[str, dict[str, str]]) -> dict[str, object]:
@@ -136,6 +139,12 @@ def paragraph_record(index: int, paragraph: ET.Element, relationships: dict[str,
     if ppr is not None:
         for tab in ppr.findall("w:tabs/w:tab", NS):
             tabs.append({"alignment": attr(tab, "val"), "position": attr(tab, "pos")})
+    indentation_node = ppr.find("w:ind", NS) if ppr is not None else None
+    indentation = {
+        "left": attr(indentation_node, "left"),
+        "first_line": attr(indentation_node, "firstLine"),
+        "hanging": attr(indentation_node, "hanging"),
+    }
 
     text = visible_text(paragraph)
     math_nodes = paragraph.findall(".//m:oMath", NS)
@@ -168,6 +177,7 @@ def paragraph_record(index: int, paragraph: ET.Element, relationships: dict[str,
         "style": style,
         "alignment": alignment,
         "tabs": tabs,
+        "indentation": indentation,
         "native_math_count": len(math_nodes),
         "native_math_text": [visible_text(node) for node in math_nodes],
         "ole_object_count": len(ole_nodes),
@@ -206,11 +216,57 @@ def inspect(path: Path) -> dict[str, object]:
             or paragraph["scripted_word_runs"]
             or any(instruction.lstrip().upper().startswith("EQ ") for instruction in paragraph["field_instructions"])
         ]
-        definition_paragraphs = [
-            {"paragraph_index": paragraph["paragraph_index"], "text": paragraph["text"]}
-            for paragraph in paragraphs
-            if re.match(r"^\s*式中\s*[，,:：]?", str(paragraph["text"]))
-        ]
+        definition_paragraphs: list[dict[str, object]] = []
+        for position, paragraph in enumerate(paragraphs):
+            marker_match = DEFINITION_MARKER_RE.match(str(paragraph["text"]))
+            if not marker_match:
+                continue
+            associated_formula_index: int | None = None
+            for previous in reversed(paragraphs[max(0, position - 3) : position]):
+                if not str(previous["text"]) and not previous["native_math_count"] and not previous["ole_object_count"]:
+                    continue
+                if previous in formula_paragraphs:
+                    associated_formula_index = int(previous["paragraph_index"])
+                break
+            following: list[dict[str, object]] = []
+            for candidate in paragraphs[position + 1 : position + 13]:
+                candidate_text = str(candidate["text"])
+                if not candidate_text:
+                    if following:
+                        break
+                    continue
+                if (candidate["native_math_count"] or candidate["ole_object_count"]) and candidate["equation_numbers"]:
+                    break
+                if DEFINITION_MARKER_RE.match(candidate_text):
+                    break
+                if re.match(r"^(?:图|表)\s*\d|^\d+(?:\.\d+)*\s+", candidate_text):
+                    break
+                has_symbol_delimiter = bool(re.search(r"[：:—－-]", candidate_text[:80]))
+                if following and not has_symbol_delimiter:
+                    break
+                following.append(
+                    {
+                        "paragraph_index": candidate["paragraph_index"],
+                        "text": candidate_text,
+                        "indentation": candidate["indentation"],
+                        "native_math_count": candidate["native_math_count"],
+                        "ole_object_count": candidate["ole_object_count"],
+                    }
+                )
+                if not has_symbol_delimiter:
+                    break
+            definition_paragraphs.append(
+                {
+                    "paragraph_index": paragraph["paragraph_index"],
+                    "text": paragraph["text"],
+                    "marker": marker_match.group(1),
+                    "marker_delimiter": marker_match.group(2),
+                    "same_line_remainder": marker_match.group(3).strip(),
+                    "indentation": paragraph["indentation"],
+                    "associated_formula_paragraph_index": associated_formula_index,
+                    "following_paragraphs": following,
+                }
+            )
         equation_references = [
             {"paragraph_index": paragraph["paragraph_index"], **reference}
             for paragraph in paragraphs
@@ -266,6 +322,8 @@ def inspect(path: Path) -> dict[str, object]:
             "Paragraph indices are not rendered page numbers.",
             "OLE and image content is inventoried but not mathematically interpreted.",
             "Alignment and typography require rendered-page and run-level review.",
+            "Direct paragraph indentation is reported when present; inherited style indentation remains unknown.",
+            "Definition-block association is a conservative proximity heuristic and does not prove symbol-definition closure.",
             "A number-shaped text match is a candidate until context confirms it labels an equation.",
         ],
     }

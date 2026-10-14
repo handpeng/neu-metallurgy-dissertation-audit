@@ -1,6 +1,6 @@
 ---
 name: neu-metallurgy-dissertation-audit
-description: Audit Northeast University School of Metallurgy dissertations for institution-specific structure, formatting, equations, figures, tables, references, terminology, and academic-content quality. Use for full or focused reviews of master's or doctoral thesis DOCX/PDF files; distinguish current authoritative requirements from legacy checklists and adviser preferences.
+description: Audit Northeast University School of Metallurgy dissertations for institution-specific structure, formatting, equations, figures, tables, references, terminology, and academic-content quality. Use for full or focused reviews of master's or doctoral thesis DOCX, PDF, or LaTeX sources; distinguish current authoritative requirements from legacy checklists and adviser preferences.
 ---
 
 # NEU Metallurgy Dissertation Audit
@@ -41,6 +41,14 @@ python3 scripts/check_docx.py /path/to/dissertation.docx
 
 Use its optional legacy thresholds or notation flags only after the applicable source is confirmed. Findings from this checker are candidates with evidence and confidence, not a substitute for semantic or rendered-page review.
 
+For LaTeX input, inventory supported display environments, labels, references, and nearby definition blocks without modifying the source:
+
+```bash
+python3 scripts/inspect_tex_equations.py /path/to/tex/source
+```
+
+Use `--legacy-formula-definition-style` with either the DOCX checker or LaTeX inspector only when the legacy `式中，` convention is applicable. It checks marker punctuation, paragraph/line separation, direct indentation evidence where available, and candidate symbol delimiters. It does not prove that every formula symbol has a matching definition.
+
 For a focused image and table layout inventory, run:
 
 ```bash
@@ -65,5 +73,7 @@ Never treat an equation image, OLE object, missing font, or failed field update 
 Lead with actionable findings ordered by severity. For every finding include location, observed evidence, applicable rule and source tier, confidence, and a concrete correction. Separate violations from recommendations and manual-review items.
 
 State coverage explicitly: file type, sections/pages inspected, rule-source status, formula object types found, and checks that could not be completed. Do not assign an overall pass when required portions were inaccessible.
+
+For every full audit and every formula-focused audit, report the formula coverage matrix defined in [references/equation-audit.md](references/equation-audit.md). Use only `passed`, `findings`, `not-checked`, or `manual-review` for each layer. Never state that formulas passed as a whole unless every applicable layer was completed and passed; otherwise name only the layers that passed and retain the remaining review obligations.
 
 Do not reproduce or endorse the legacy instruction to edit quotations to evade plagiarism detection. Replace it with checks for accurate quotation, attribution, citation completeness, and genuine paraphrase.

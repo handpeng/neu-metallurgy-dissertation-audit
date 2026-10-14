@@ -10,6 +10,8 @@ This repository does not redistribute university or adviser Word documents. User
 - Distinguishes current official rules, unverified official material, user requirements, adviser preferences, and general guidance.
 - Tracks all 56 substantive rows from the legacy self-check through a normalized crosswalk.
 - Inventories native OMML, embedded OLE/MathType, legacy EQ fields, scripted text, media, formula numbers, and formula references.
+- Inventories LaTeX display equations, labels, source references, and nearby `式中`/`其中` blocks.
+- Emits a formula coverage matrix that prevents numbering-only checks from being reported as a complete formula pass.
 - Audits standalone image placement, floating anchors, image extents, table grids, column proportions, explicit cell breaks, and estimated wrapping risk.
 - Runs conservative evidence-backed checks with paragraph-level locations and explicit confidence.
 - Classifies layout changes as `auto-safe`, `auto-assisted`, `manual-only`, or `do-not-change` before any edit is proposed.
@@ -50,16 +52,25 @@ Run conservative checks:
 python3 scripts/check_docx.py dissertation.docx > findings.json
 ```
 
+Inventory equations in one LaTeX file or a source tree:
+
+```bash
+python3 scripts/inspect_tex_equations.py ./Tex > tex-equations.json
+```
+
 Enable only confirmed local requirements explicitly:
 
 ```bash
 python3 scripts/check_docx.py dissertation.docx \
   --legacy-text-rules \
+  --legacy-formula-definition-style \
   --min-references 60 \
   --min-foreign-references 20 \
   --equation-separator dash \
   --equation-parentheses halfwidth
 ```
+
+The same formula-definition flag is available on `inspect_tex_equations.py`. It enables candidates for the legacy `式中，` marker, following-line separation, indentation evidence, and `：`/`—` symbol delimiters. It is intentionally off by default and does not automate semantic symbol-definition matching.
 
 The scripts use only the Python standard library. Layout output distinguishes direct OOXML structure from width/font estimates and rendered confirmation. DOCX does not record automatic table-cell wrapping as an explicit event, so `likely_automatic_wrap` is a review candidate rather than a confirmed formatting defect.
 

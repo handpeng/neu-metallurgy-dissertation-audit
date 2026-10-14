@@ -15,6 +15,8 @@ class SkillLayoutTests(unittest.TestCase):
         self.assertNotIn("TODO", skill)
         self.assertIn("references/layout-audit.md", skill)
         self.assertIn("scripts/inspect_layout.py", skill)
+        self.assertIn("scripts/inspect_tex_equations.py", skill)
+        self.assertIn("formula coverage matrix", skill.lower())
 
     def test_local_markdown_links_resolve(self) -> None:
         for markdown in ROOT.rglob("*.md"):
