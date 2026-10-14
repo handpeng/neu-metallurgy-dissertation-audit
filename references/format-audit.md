@@ -22,6 +22,8 @@ Classify grammar and `的/地/得` findings as linguistic findings, not institut
 
 ## Figures And Tables
 
+For standalone image paragraphs or cells, object dimensions, table and column widths, explicit cell breaks, estimated wrapping, and modification feasibility, follow [layout-audit.md](layout-audit.md). Keep its `structural`, `estimated`, and `rendered` evidence layers distinct.
+
 Inventory every figure and table, its number, Chinese and English caption, first in-text reference, chapter association, and ordering. Check duplicates, missing numbers, stale cross-references, references such as `上图` or `下表`, and inconsistent caption terminology.
 
 For captions, check bilingual pairing, number-to-title spacing, `Fig.` spacing, the capitalization convention selected for English captions, brevity, punctuation, and placement. Check the configured whitespace above Chinese table captions and below figure captions; do not hard-code `0.5-1` lines unless the legacy adviser rule is active.

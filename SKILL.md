@@ -17,6 +17,7 @@ For a full audit or a request to reproduce the legacy self-check, also read [ref
 
 - For a full audit, read all references below.
 - For structure, typography, figures, tables, units, or references, read [references/format-audit.md](references/format-audit.md).
+- For image placement, standalone image cells, table widths, column proportions, cell wrapping, or layout modification feasibility, also read [references/layout-audit.md](references/layout-audit.md).
 - For any formula, equation, symbol, derivation, or mathematical-notation request, read [references/equation-audit.md](references/equation-audit.md).
 - For argument, novelty, methods, evidence, discussion, abstract, or doctoral-level quality, read [references/content-audit.md](references/content-audit.md).
 
@@ -39,6 +40,14 @@ python3 scripts/check_docx.py /path/to/dissertation.docx
 ```
 
 Use its optional legacy thresholds or notation flags only after the applicable source is confirmed. Findings from this checker are candidates with evidence and confidence, not a substitute for semantic or rendered-page review.
+
+For a focused image and table layout inventory, run:
+
+```bash
+python3 scripts/inspect_layout.py /path/to/dissertation.docx
+```
+
+Separate `structural`, `estimated`, and `rendered` evidence. Automatic Word line wrapping is not explicit in DOCX XML: treat `likely_automatic_wrap` as a candidate until the target renderer confirms it. For every layout finding, report whether modification is `auto-safe`, `auto-assisted`, `manual-only`, or `do-not-change`, plus its risk and required verification.
 
 For `.doc`, convert a copy in a temporary directory before inspection. For visual layout claims, render the document or supplied PDF and inspect representative pages plus every page containing a reported visual defect. LibreOffice rendering may differ from Microsoft Word, so identify the renderer and lower confidence when layout depends on pagination, fonts, fields, or embedded objects.
 

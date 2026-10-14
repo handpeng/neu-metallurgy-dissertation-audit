@@ -10,7 +10,9 @@ This repository does not redistribute university or adviser Word documents. User
 - Distinguishes current official rules, unverified official material, user requirements, adviser preferences, and general guidance.
 - Tracks all 56 substantive rows from the legacy self-check through a normalized crosswalk.
 - Inventories native OMML, embedded OLE/MathType, legacy EQ fields, scripted text, media, formula numbers, and formula references.
-- Runs conservative deterministic checks with paragraph-level evidence and explicit confidence.
+- Audits standalone image placement, floating anchors, image extents, table grids, column proportions, explicit cell breaks, and estimated wrapping risk.
+- Runs conservative evidence-backed checks with paragraph-level locations and explicit confidence.
+- Classifies layout changes as `auto-safe`, `auto-assisted`, `manual-only`, or `do-not-change` before any edit is proposed.
 - Keeps disputed legacy rules opt-in instead of silently treating them as doctoral requirements.
 
 ## Limits
@@ -36,6 +38,12 @@ Inventory a DOCX without changing it:
 python3 scripts/inspect_docx.py dissertation.docx > inventory.json
 ```
 
+Inventory image and table layout evidence:
+
+```bash
+python3 scripts/inspect_layout.py dissertation.docx > layout.json
+```
+
 Run conservative checks:
 
 ```bash
@@ -53,7 +61,7 @@ python3 scripts/check_docx.py dissertation.docx \
   --equation-parentheses halfwidth
 ```
 
-The scripts use only the Python standard library.
+The scripts use only the Python standard library. Layout output distinguishes direct OOXML structure from width/font estimates and rendered confirmation. DOCX does not record automatic table-cell wrapping as an explicit event, so `likely_automatic_wrap` is a review candidate rather than a confirmed formatting defect.
 
 Keyword and reference thresholds are also configurable with `--keyword-min`, `--keyword-max`, `--min-references`, and `--min-foreign-references`. Do not enable a threshold until its current authority is confirmed.
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import inspect_docx
+import inspect_layout
 
 
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
@@ -41,6 +42,11 @@ def finding(
     paragraph_index: int | None = None,
     observed: str = "",
     confidence: str = "high",
+    evidence_layer: str | None = None,
+    modification_disposition: str | None = None,
+    modification_risk: str | None = None,
+    verification_required: str | None = None,
+    location: dict[str, object] | None = None,
 ) -> dict[str, object]:
     item: dict[str, object] = {
         "rule_id": rule_id,
@@ -54,7 +60,192 @@ def finding(
         item["paragraph_index"] = paragraph_index
     if observed:
         item["evidence"] = evidence(observed)
+    if evidence_layer:
+        item["evidence_layer"] = evidence_layer
+    if modification_disposition:
+        item["modification_disposition"] = modification_disposition
+    if modification_risk:
+        item["modification_risk"] = modification_risk
+    if verification_required:
+        item["verification_required"] = verification_required
+    if location:
+        item["location"] = location
     return item
+
+
+def layout_finding(
+    rule_id: str,
+    severity: str,
+    check_type: str,
+    message: str,
+    suggestion: str,
+    evidence_layer: str,
+    disposition: str,
+    risk: str,
+    verification: str,
+    **kwargs: object,
+) -> dict[str, object]:
+    return finding(
+        rule_id,
+        severity,
+        check_type,
+        message,
+        suggestion,
+        evidence_layer=evidence_layer,
+        modification_disposition=disposition,
+        modification_risk=risk,
+        verification_required=verification,
+        **kwargs,
+    )
+
+
+def scan_layout(layout: dict[str, object]) -> list[dict[str, object]]:
+    findings: list[dict[str, object]] = []
+    composite_locations: set[tuple[object, ...]] = set()
+    for image in layout["images"]:
+        paragraph_index = int(image["paragraph_index"])
+        cell_location = image["table_cell"]
+        location = {"paragraph_index": paragraph_index}
+        if cell_location:
+            location["table_cell"] = cell_location
+        if image["text_in_same_paragraph"]:
+            findings.append(
+                layout_finding(
+                    "IMG01", "warning", "deterministic", "An image shares a paragraph with visible text.",
+                    "Separate the figure object from body or caption text after confirming the intended grouping.",
+                    "structural", "manual-only", "medium",
+                    "Render the changed page and verify figure-caption association, object order, and cross-references.",
+                    paragraph_index=paragraph_index, observed=str(image["text_in_same_paragraph"]), location=location,
+                )
+            )
+        if image["inside_table_cell"] and not image["dedicated_image_cell"]:
+            findings.append(
+                layout_finding(
+                    "IMG02", "review", "deterministic", "An image is in a table cell that also contains visible text.",
+                    "Determine whether the table is an intentional figure layout before separating the image or text.",
+                    "structural", "manual-only", "high",
+                    "Render the entire figure/table and verify composite-panel labels, captions, and reading order.",
+                    paragraph_index=paragraph_index, observed=str(image["cell_text"]), location=location,
+                )
+            )
+        if image["floating_anchor_count"]:
+            findings.append(
+                layout_finding(
+                    "IMG03", "review", "visual", "A floating image anchor may move or wrap differently across renderers.",
+                    "Inspect its rendered placement; convert to inline only when that matches the confirmed template and intent.",
+                    "structural", "do-not-change", "high",
+                    "Compare Microsoft Word or identified-renderer output before and after any anchor change.",
+                    paragraph_index=paragraph_index, observed=f"floating anchors: {image['floating_anchor_count']}", location=location,
+                )
+            )
+        if image["exceeds_usable_width"]:
+            findings.append(
+                layout_finding(
+                    "IMG04", "warning", "deterministic", "An image extent exceeds the estimated usable page width.",
+                    "Confirm the applicable section, then resize proportionally or revise the page layout on a copy.",
+                    "structural", "auto-assisted", "high",
+                    "Render adjacent pages and verify legibility, aspect ratio, caption placement, and pagination.",
+                    paragraph_index=paragraph_index, observed=str(image["extents"]), location=location,
+                )
+            )
+        if int(image["visual_count"]) > 1 or int(image["cell_visual_count"]) > 1:
+            key = (
+                "cell",
+                str(cell_location),
+            ) if cell_location else ("paragraph", paragraph_index)
+            if key not in composite_locations:
+                composite_locations.add(key)
+                findings.append(
+                    layout_finding(
+                        "IMG05", "review", "semantic", "Multiple visual objects may form a composite figure.",
+                        "Confirm that the panels belong to one numbered figure and that panel labels and alignment are intentional.",
+                        "structural", "manual-only", "high",
+                        "Inspect the rendered composite figure together with its caption and first in-text reference.",
+                        paragraph_index=paragraph_index,
+                        observed=f"paragraph visuals: {image['visual_count']}; cell visuals: {image['cell_visual_count']}",
+                        confidence="medium", location=location,
+                    )
+                )
+
+    for table in layout["tables"]:
+        table_index = int(table["table_index"])
+        paragraph_index = table["first_paragraph_index"]
+        table_location = {"table": table_index}
+        if table["exceeds_usable_width"]:
+            findings.append(
+                layout_finding(
+                    "TBL01", "warning", "deterministic", "A table grid exceeds the estimated usable page width.",
+                    "Confirm the section geometry, then adjust selected columns, orientation, or table structure on a copy.",
+                    "structural", "auto-assisted", "high",
+                    "Render the full table and adjacent pages; verify all text, borders, captions, notes, and pagination.",
+                    paragraph_index=paragraph_index, observed=f"grid width: {table['grid_total_cm']} cm; usable-width ratio: {table['usable_width_ratio']}", location=table_location,
+                )
+            )
+        for cell in table["cells"]:
+            cell_location = {
+                "table": table_index,
+                "row": cell["row"],
+                "cell": cell["cell"],
+                "logical_column": cell["logical_column"],
+            }
+            cell_paragraph = cell["first_paragraph_index"]
+            observed = f"width: {cell['width_cm']} cm; text: {cell['text']}"
+            if cell["explicit_break_count"]:
+                findings.append(
+                    layout_finding(
+                        "TBL02", "review", "deterministic", "A table cell contains an explicit line break.",
+                        "Confirm whether the forced break is intentional; remove it only when the header or value should remain unbroken.",
+                        "structural", "manual-only", "medium",
+                        "Render the row before and after any edit and verify row height, meaning, and neighboring columns.",
+                        paragraph_index=cell_paragraph, observed=observed, location=cell_location,
+                    )
+                )
+            if int(cell["nonempty_paragraph_count"]) > 1:
+                findings.append(
+                    layout_finding(
+                        "TBL03", "review", "deterministic", "A table cell contains multiple non-empty paragraphs.",
+                        "Confirm whether the paragraph separation is semantically required before merging or restructuring it.",
+                        "structural", "manual-only", "medium",
+                        "Render the complete row and verify paragraph spacing, row height, and reading order.",
+                        paragraph_index=cell_paragraph, observed=observed, location=cell_location,
+                    )
+                )
+            if cell["likely_automatic_wrap"]:
+                findings.append(
+                    layout_finding(
+                        "TBL04", "review", "semantic", "Cell content is likely to wrap automatically based on width and font estimates.",
+                        "Confirm the actual line break in a rendered document, then adjust selected widths or wording if the wrap harms readability.",
+                        "estimated", "auto-assisted", "medium",
+                        "Render with the target Word environment and compare the full table before and after any width change.",
+                        paragraph_index=cell_paragraph, observed=observed,
+                        confidence="medium", location=cell_location,
+                    )
+                )
+            if cell["fit_or_clipping_review"]:
+                findings.append(
+                    layout_finding(
+                        "TBL06", "review", "visual", "A no-wrap or fit-text cell may compress or clip content.",
+                        "Inspect the rendered cell before changing no-wrap, fit-text, font size, or column width settings.",
+                        "estimated", "do-not-change", "high",
+                        "Use the target Word renderer and verify that the complete value remains legible.",
+                        paragraph_index=cell_paragraph, observed=observed, location=cell_location,
+                    )
+                )
+        for column in table["columns"]:
+            if column["disproportionate_width_candidate"]:
+                column_location = {"table": table_index, "logical_column": column["column"]}
+                findings.append(
+                    layout_finding(
+                        "TBL05", "review", "semantic", "A column may be narrow relative to its estimated content load.",
+                        "Confirm header/data semantics and rendered wrapping before redistributing selected column widths.",
+                        "estimated", "auto-assisted", "medium",
+                        "Render the complete table and compare headers, data alignment, wrapping, and total table width.",
+                        paragraph_index=paragraph_index,
+                        observed=f"width: {column['width_cm']} cm; width share: {column['share_of_table']}; content-load share: {column['content_load_share_estimate']}",
+                        confidence="medium", location=column_location,
+                    )
+                )
+    return findings
 
 
 def load_paragraphs(path: Path) -> list[dict[str, object]]:
@@ -301,6 +492,7 @@ def run_checks(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("keyword-min cannot exceed keyword-max")
 
     inspection = inspect_docx.inspect(args.docx)
+    layout = inspect_layout.inspect(args.docx)
     paragraphs = load_paragraphs(args.docx)
     findings = scan_text_rules(paragraphs, args.legacy_text_rules)
     findings.extend(scan_caption_sequences(paragraphs))
@@ -309,7 +501,9 @@ def run_checks(args: argparse.Namespace) -> dict[str, object]:
     findings.extend(reference_findings)
     keyword_summary = inspect_keywords(paragraphs)
     findings.extend(check_keyword_limits(keyword_summary, args.keyword_min, args.keyword_max))
+    findings.extend(scan_layout(layout))
     findings.sort(key=lambda item: (int(item.get("paragraph_index", 10**9)), str(item["rule_id"]), str(item["message"])))
+    layout_findings = [item for item in findings if str(item["rule_id"]).startswith(("IMG", "TBL"))]
 
     return {
         "input": str(args.docx.resolve()),
@@ -325,15 +519,20 @@ def run_checks(args: argparse.Namespace) -> dict[str, object]:
         "summary": {
             "finding_count": len(findings),
             "by_severity": dict(sorted(Counter(str(item["severity"]) for item in findings).items())),
+            "layout_finding_count": len(layout_findings),
+            "layout_modification_dispositions": dict(
+                sorted(Counter(str(item["modification_disposition"]) for item in layout_findings).items())
+            ),
             **reference_summary,
             "keywords": keyword_summary,
         },
         "inventory": inspection["inventory"],
+        "layout": layout,
         "findings": findings,
         "manual_checks": [
             "Current university/school template and effective date",
             "Page layout, fonts, headers, pagination, and contents indentation",
-            "Figure/table visual quality, caption pairing, borders, and whitespace",
+            "Rendered confirmation of estimated table wrapping, column balance, clipping, caption pairing, borders, and whitespace",
             "Equation centering, typography, OLE/image content, and symbol-definition closure",
             "Abstract completeness, contribution claims, and academic-content quality",
             "Citation metadata and citation-style conformance",

@@ -10,7 +10,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_docx  # noqa: E402
-from docx_factory import ole_paragraph, text_paragraph, write_docx  # noqa: E402
+from docx_factory import (  # noqa: E402
+    cell_paragraph,
+    drawing_paragraph,
+    ole_paragraph,
+    section_properties,
+    table_xml,
+    text_paragraph,
+    write_docx,
+)
 
 
 def arguments(path: Path, **overrides: object) -> argparse.Namespace:
@@ -93,6 +101,39 @@ class CheckDocxTests(unittest.TestCase):
             result = check_docx.run_checks(arguments(path, keyword_min=3, keyword_max=5))
             self.assertIn("L06", [item["rule_id"] for item in result["findings"]])
             self.assertEqual(result["summary"]["keywords"]["count"], 2)
+
+    def test_layout_findings_include_evidence_and_modification_assessment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "layout.docx"
+            write_docx(
+                path,
+                [
+                    drawing_paragraph(6000000, text="与图片同段"),
+                    table_xml([1000, 9000], [[cell_paragraph("很长的窄列内容很可能发生自动换行"), cell_paragraph("值")]]),
+                ],
+                include_image=True,
+                section_xml=section_properties(page_width=10000, left_margin=1000, right_margin=1000),
+            )
+            result = check_docx.run_checks(arguments(path))
+            layout_findings = [item for item in result["findings"] if item["rule_id"].startswith(("IMG", "TBL"))]
+
+            self.assertTrue(layout_findings)
+            self.assertIn("IMG01", [item["rule_id"] for item in layout_findings])
+            self.assertIn("IMG04", [item["rule_id"] for item in layout_findings])
+            self.assertIn("TBL01", [item["rule_id"] for item in layout_findings])
+            self.assertIn("TBL04", [item["rule_id"] for item in layout_findings])
+            for item in layout_findings:
+                self.assertIn(item["evidence_layer"], {"structural", "estimated", "rendered"})
+                self.assertIn(item["modification_disposition"], {"auto-safe", "auto-assisted", "manual-only", "do-not-change"})
+                self.assertIn("modification_risk", item)
+                self.assertIn("verification_required", item)
+                self.assertIn("location", item)
+            wrap = next(item for item in layout_findings if item["rule_id"] == "TBL04")
+            self.assertEqual(wrap["evidence_layer"], "estimated")
+            self.assertIn("likely", wrap["message"].lower())
+            self.assertNotIn("confirmed", wrap["message"].lower())
+            self.assertEqual(result["summary"]["layout_finding_count"], len(layout_findings))
+            self.assertEqual(sum(result["summary"]["layout_modification_dispositions"].values()), len(layout_findings))
 
 
 if __name__ == "__main__":

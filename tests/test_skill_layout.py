@@ -13,6 +13,8 @@ class SkillLayoutTests(unittest.TestCase):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertTrue(skill.startswith("---\nname: neu-metallurgy-dissertation-audit\n"))
         self.assertNotIn("TODO", skill)
+        self.assertIn("references/layout-audit.md", skill)
+        self.assertIn("scripts/inspect_layout.py", skill)
 
     def test_local_markdown_links_resolve(self) -> None:
         for markdown in ROOT.rglob("*.md"):
