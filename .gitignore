@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+*.doc
+*.docx
+*.pdf
+*.json
+.DS_Store

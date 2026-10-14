@@ -1,0 +1,4 @@
+interface:
+  display_name: "NEU Metallurgy Dissertation Audit"
+  short_description: "Audit NEU metallurgy dissertations, including equations"
+  default_prompt: "Use $neu-metallurgy-dissertation-audit to audit this dissertation and report evidence-backed findings."
