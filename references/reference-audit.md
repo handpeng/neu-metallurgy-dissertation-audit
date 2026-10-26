@@ -21,7 +21,7 @@ Superscript/baseline placement is a rendered or run-level check. Text extraction
 
 ## Entry Prefix And Punctuation
 
-- Start every entry with `[序号] `: half-width brackets followed by exactly one ASCII space.
+- Display every entry with a `[序号]` prefix. A literal prefix uses one following ASCII space. Word automatic numbering is allowed when `numbering.xml` renders the same bracketed decimal label; its tab/hanging-indent separator requires rendered confirmation.
 - Use half-width bibliographic punctuation throughout the entry, including `,`, `.`, `:`, `;`, `?`, `!`, `(`, `)`, `[`, and `]`.
 - Separate authors with exactly `, `.
 - End the author block with exactly `. `.
@@ -80,6 +80,6 @@ Inspect hanging indents, line starts, font substitution, line wrapping, and supe
 
 ## Automation Boundary
 
-Deterministic checks may cover numbering, citation/list coverage, displayed author count, truncation markers, separator spaces, punctuation width, type-marker position, and the listed element orders. Metadata correctness, genuine author completeness, English capitalization semantics, source-title accuracy, DOI/URL resolution, font rendering, and page layout still require semantic, external, or rendered review.
+Deterministic checks may cover literal and Word automatic numbering, citation/list coverage, displayed author count, truncation markers, separator spaces, punctuation width, type-marker position, and the listed element orders. Metadata correctness, genuine author completeness, English capitalization semantics, source-title accuracy, DOI/URL resolution, automatic-number suffix rendering, font rendering, and page layout still require semantic, external, or rendered review.
 
 Do not enforce a minimum number of references or a foreign-language proportion.

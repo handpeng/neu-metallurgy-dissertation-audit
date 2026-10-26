@@ -34,6 +34,23 @@ def text_paragraph(
     return f"<w:p>{indentation}<w:r><w:t>{html.escape(text)}</w:t></w:r></w:p>"
 
 
+def numbered_text_paragraph(text: str, *, num_id: int = 2, level: int = 0) -> str:
+    return (
+        f'<w:p><w:pPr><w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="{num_id}"/>'
+        f"</w:numPr></w:pPr><w:r><w:t>{html.escape(text)}</w:t></w:r></w:p>"
+    )
+
+
+def decimal_numbering_xml(*, num_id: int = 2, abstract_id: int = 2, level_text: str = "[%1]") -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="{abstract_id}">'
+        f'<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>'
+        f'<w:lvlText w:val="{html.escape(level_text)}"/></w:lvl></w:abstractNum>'
+        f'<w:num w:numId="{num_id}"><w:abstractNumId w:val="{abstract_id}"/></w:num></w:numbering>'
+    )
+
+
 def math_paragraph(expression: str, label: str = "") -> str:
     label_xml = f"<w:r><w:t>{html.escape(label)}</w:t></w:r>" if label else ""
     return (
@@ -109,6 +126,7 @@ def write_docx(
     include_ole: bool = False,
     include_image: bool = False,
     section_xml: str = "<w:sectPr/>",
+    numbering_xml: str | None = None,
 ) -> Path:
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -137,4 +155,6 @@ def write_docx(
             archive.writestr("word/media/image1.png", b"image")
         if include_ole:
             archive.writestr("word/embeddings/oleObject1.bin", b"ole")
+        if numbering_xml is not None:
+            archive.writestr("word/numbering.xml", numbering_xml)
     return path

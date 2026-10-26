@@ -12,8 +12,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import check_docx  # noqa: E402
 from docx_factory import (  # noqa: E402
     cell_paragraph,
+    decimal_numbering_xml,
     drawing_paragraph,
     math_paragraph,
+    numbered_text_paragraph,
     ole_paragraph,
     section_properties,
     table_xml,
@@ -145,6 +147,45 @@ class CheckDocxTests(unittest.TestCase):
             self.assertTrue(any("not cited" in str(item["message"]) for item in l53))
             self.assertFalse(l55)
             self.assertEqual(result["summary"]["detected_references"], 3)
+
+    def test_word_automatic_reference_numbering_is_resolved(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "automatic-reference-numbering.docx"
+            write_docx(
+                path,
+                [
+                    text_paragraph("正文引用[1-2]。"),
+                    text_paragraph("参考文献"),
+                    numbered_text_paragraph("张三. 论文题名[J]. 冶金学报, 2024, 10(2): 1-9."),
+                    numbered_text_paragraph("W Y Cha, D S Kim, Y D Lee. Thermodynamic Study [J]. ISIJ International, 2004, 44(7): 1134-1139."),
+                    text_paragraph("致谢"),
+                ],
+                numbering_xml=decimal_numbering_xml(),
+            )
+            result = check_docx.run_checks(arguments(path))
+            rules = {item["rule_id"] for item in result["findings"]}
+
+            self.assertEqual(result["summary"]["detected_references"], 2)
+            self.assertEqual(result["summary"]["first_citation_order"], [1, 2])
+            self.assertFalse({"L53", "L54", "L55"} & rules)
+            self.assertEqual(result["reference_coverage"]["section_inventory"]["status"], "passed")
+
+    def test_empty_reference_inventory_cannot_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "empty-reference-inventory.docx"
+            write_docx(
+                path,
+                [
+                    text_paragraph("参考文献"),
+                    text_paragraph("这不是带编号的参考文献条目。"),
+                    text_paragraph("致谢"),
+                ],
+            )
+            result = check_docx.run_checks(arguments(path))
+
+            self.assertIn("L53", {item["rule_id"] for item in result["findings"]})
+            self.assertEqual(result["summary"]["detected_references"], 0)
+            self.assertEqual(result["reference_coverage"]["section_inventory"]["status"], "findings")
 
     def test_keyword_limits_are_configurable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

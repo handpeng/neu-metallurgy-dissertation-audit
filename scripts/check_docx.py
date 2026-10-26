@@ -258,10 +258,77 @@ def load_paragraphs(path: Path) -> list[dict[str, object]]:
     with zipfile.ZipFile(path) as archive:
         document = ET.fromstring(archive.read("word/document.xml"))
         relationships = inspect_docx.relationship_map(archive)
-    return [
-        inspect_docx.paragraph_record(index, paragraph, relationships)
-        for index, paragraph in enumerate(document.findall(".//w:p", inspect_docx.NS), start=1)
-    ]
+        numbering = load_numbering_definitions(archive)
+
+    counters: dict[tuple[str, int], int] = {}
+    records: list[dict[str, object]] = []
+    for index, paragraph in enumerate(document.findall(".//w:p", inspect_docx.NS), start=1):
+        record = inspect_docx.paragraph_record(index, paragraph, relationships)
+        ppr = paragraph.find("w:pPr", inspect_docx.NS)
+        num_pr = ppr.find("w:numPr", inspect_docx.NS) if ppr is not None else None
+        num_id_node = num_pr.find("w:numId", inspect_docx.NS) if num_pr is not None else None
+        level_node = num_pr.find("w:ilvl", inspect_docx.NS) if num_pr is not None else None
+        num_id = inspect_docx.attr(num_id_node, "val")
+        level = int(inspect_docx.attr(level_node, "val") or 0)
+        definition = numbering.get(num_id or "", {}).get(level)
+        if definition and definition["format"] == "decimal":
+            key = (str(num_id), level)
+            counters[key] = counters.get(key, int(definition["start"]) - 1) + 1
+            for deeper in [candidate for candidate in counters if candidate[0] == num_id and candidate[1] > level]:
+                del counters[deeper]
+            label = str(definition["text"])
+            for referenced_level in range(level + 1):
+                value = counters.get((str(num_id), referenced_level))
+                if value is not None:
+                    label = label.replace(f"%{referenced_level + 1}", str(value))
+            record["numbering"] = {
+                "num_id": num_id,
+                "level": level,
+                "label": label,
+                "suffix": definition["suffix"],
+            }
+        else:
+            record["numbering"] = None
+        records.append(record)
+    return records
+
+
+def load_numbering_definitions(
+    archive: zipfile.ZipFile,
+) -> dict[str, dict[int, dict[str, object]]]:
+    if "word/numbering.xml" not in archive.namelist():
+        return {}
+    root = ET.fromstring(archive.read("word/numbering.xml"))
+    abstract_levels: dict[str, dict[int, dict[str, object]]] = {}
+    for abstract in root.findall("w:abstractNum", inspect_docx.NS):
+        abstract_id = inspect_docx.attr(abstract, "abstractNumId")
+        if abstract_id is None:
+            continue
+        levels: dict[int, dict[str, object]] = {}
+        for level in abstract.findall("w:lvl", inspect_docx.NS):
+            level_index = int(inspect_docx.attr(level, "ilvl") or 0)
+            levels[level_index] = {
+                "start": int(inspect_docx.attr(level.find("w:start", inspect_docx.NS), "val") or 1),
+                "format": inspect_docx.attr(level.find("w:numFmt", inspect_docx.NS), "val") or "decimal",
+                "text": inspect_docx.attr(level.find("w:lvlText", inspect_docx.NS), "val") or f"%{level_index + 1}",
+                "suffix": inspect_docx.attr(level.find("w:suff", inspect_docx.NS), "val") or "tab",
+            }
+        abstract_levels[abstract_id] = levels
+
+    definitions: dict[str, dict[int, dict[str, object]]] = {}
+    for numbering_instance in root.findall("w:num", inspect_docx.NS):
+        num_id = inspect_docx.attr(numbering_instance, "numId")
+        abstract_id = inspect_docx.attr(numbering_instance.find("w:abstractNumId", inspect_docx.NS), "val")
+        if num_id is None or abstract_id not in abstract_levels:
+            continue
+        levels = {level: dict(values) for level, values in abstract_levels[abstract_id].items()}
+        for override in numbering_instance.findall("w:lvlOverride", inspect_docx.NS):
+            level_index = int(inspect_docx.attr(override, "ilvl") or 0)
+            start_override = inspect_docx.attr(override.find("w:startOverride", inspect_docx.NS), "val")
+            if start_override is not None and level_index in levels:
+                levels[level_index]["start"] = int(start_override)
+        definitions[num_id] = levels
+    return definitions
 
 
 def scan_text_rules(paragraphs: list[dict[str, object]], legacy_text_rules: bool) -> list[dict[str, object]]:
@@ -628,15 +695,27 @@ def collect_references(
         if not text:
             continue
         match = REFERENCE_ENTRY_RE.match(text)
-        if match:
+        numbering_info = paragraph.get("numbering")
+        automatic_label = str(numbering_info["label"]) if isinstance(numbering_info, dict) else ""
+        automatic_number = re.search(r"\d+", automatic_label)
+        if match or automatic_number:
             if current is not None:
                 entries.append(current)
-            number = next(int(value) for value in match.groups()[:3] if value is not None)
+            if match:
+                number = next(int(value) for value in match.groups()[:3] if value is not None)
+                rendered_text = text
+                automatic_numbering = False
+            else:
+                number = int(automatic_number.group(0))
+                rendered_text = f"{automatic_label} {text}"
+                automatic_numbering = True
             current = {
                 "number": number,
                 "paragraph_index": index,
                 "paragraph_indices": [index],
-                "text": text,
+                "text": rendered_text,
+                "automatic_numbering": automatic_numbering,
+                "numbering_suffix": numbering_info.get("suffix") if isinstance(numbering_info, dict) else None,
             }
         elif current is not None:
             current["text"] = f"{current['text']} {text}"
@@ -840,6 +919,13 @@ def scan_references(
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     findings: list[dict[str, object]] = []
     reference_section_found, entries, body = collect_references(paragraphs)
+    if reference_section_found and not entries:
+        findings.append(
+            finding(
+                "L53", "warning", "deterministic", "The reference heading was found, but no numbered entries were detected.",
+                "Inspect literal and automatic Word numbering; do not report reference formatting as passed.",
+            )
+        )
     for entry in entries:
         findings.extend(check_reference_entry(entry))
 
@@ -921,15 +1007,23 @@ def reference_coverage(
 ) -> dict[str, dict[str, str]]:
     reference_rules = {"L53", "L54", "L55", "L56"}
     relevant = [item for item in findings if item["rule_id"] in reference_rules]
-    author_findings = any(item["rule_id"] == "L54" for item in relevant)
-    structure_findings = any(item["rule_id"] == "L55" for item in relevant)
-    linkage_findings = any(item["rule_id"] == "L53" for item in relevant)
-    section_status = "passed" if summary["reference_section_found"] else "findings"
+    author_findings = [item for item in relevant if item["rule_id"] == "L54"]
+    structure_findings = [item for item in relevant if item["rule_id"] == "L55"]
+    linkage_findings = [item for item in relevant if item["rule_id"] == "L53"]
+
+    def status(items: list[dict[str, object]]) -> str:
+        if any(item["severity"] == "warning" for item in items):
+            return "findings"
+        if items:
+            return "manual-review"
+        return "passed"
+
+    section_status = "passed" if summary["reference_section_found"] and int(summary["detected_references"]) else "findings"
     return {
         "section_inventory": {"status": section_status, "detail": "The reference heading and numbered entries were inventoried."},
-        "numbering_and_linkage": {"status": "findings" if linkage_findings else "passed", "detail": "List continuity, first-citation order, and citation/list coverage were checked from visible DOCX text."},
-        "displayed_authors": {"status": "findings" if author_findings else "passed", "detail": "Displayed author count, separators, and exact `等`/`et al.` syntax were checked; source metadata still requires review."},
-        "punctuation_and_structure": {"status": "findings" if structure_findings else "passed", "detail": "Half-width punctuation, spaces, type-marker positions, and supported entry layouts were checked."},
+        "numbering_and_linkage": {"status": status(linkage_findings), "detail": "Literal and automatic list numbering, first-citation order, and citation/list coverage were checked where visible."},
+        "displayed_authors": {"status": status(author_findings), "detail": "Displayed author count, separators, and exact `等`/`et al.` syntax were checked; source metadata still requires review."},
+        "punctuation_and_structure": {"status": status(structure_findings), "detail": "Half-width punctuation, spaces, type-marker positions, and supported entry layouts were checked."},
         "capitalization_and_metadata": {"status": "manual-review", "detail": "English capitalization semantics, author completeness, titles, dates, DOI, URL, and publication metadata require source comparison."},
         "rendering_layout": {"status": "manual-review", "detail": "Superscript citations, fonts, hanging indents, line starts, and page rendering require Word inspection."},
     }
