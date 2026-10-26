@@ -28,8 +28,6 @@ def arguments(path: Path, **overrides: object) -> argparse.Namespace:
         "output": None,
         "legacy_text_rules": False,
         "legacy_formula_definition_style": False,
-        "min_references": None,
-        "min_foreign_references": None,
         "keyword_min": None,
         "keyword_max": None,
         "equation_separator": "any",
@@ -75,26 +73,78 @@ class CheckDocxTests(unittest.TestCase):
             self.assertIn("L48", [item["rule_id"] for item in legacy["findings"]])
             self.assertIn("L49", [item["rule_id"] for item in legacy["findings"]])
 
-    def test_reference_sequence_and_confirmed_thresholds(self) -> None:
+    def test_exact_reference_profile_accepts_supported_layouts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "references.docx"
             write_docx(
                 path,
                 [
+                    text_paragraph("正文依次引用[1]和[2-3]，随后见文献[4]。"),
                     text_paragraph("参考文献"),
-                    text_paragraph("[1] 张三. 中文文献[J]."),
-                    text_paragraph("[3] SMITH A. English article[J]."),
+                    text_paragraph("[1] 张三, 李四, 王五, 等. 论文题名[J]. 冶金学报, 2024, 10(2): 1-9."),
+                    text_paragraph("[2] W Y Cha, D S Kim, Y D Lee. Thermodynamic Study [J]. ISIJ International, 2004, 44(7): 1134-1139."),
+                    text_paragraph("[3] 张三. 炼钢原理[M]. 北京: 冶金工业出版社, 2020, 1-20."),
+                    text_paragraph("[4] 张三. 转炉炼钢研究[D]. 沈阳: 东北大学, 2026."),
                     text_paragraph("致谢"),
                 ],
             )
-            result = check_docx.run_checks(arguments(path, min_references=3, min_foreign_references=2))
+            result = check_docx.run_checks(arguments(path))
             rules = [item["rule_id"] for item in result["findings"]]
 
-            self.assertIn("L53", rules)
-            self.assertIn("L57", rules)
+            self.assertFalse({"L53", "L54", "L55"} & set(rules))
             self.assertTrue(result["summary"]["reference_section_found"])
-            self.assertEqual(result["summary"]["detected_references"], 2)
-            self.assertEqual(result["summary"]["estimated_foreign_references"], 1)
+            self.assertEqual(result["summary"]["detected_references"], 4)
+            self.assertEqual(result["summary"]["detected_in_text_citations"], 4)
+            self.assertEqual(result["summary"]["first_citation_order"], [1, 2, 3, 4])
+            self.assertEqual(result["summary"]["reference_profile"], "self-check-first")
+            self.assertEqual(result["reference_coverage"]["displayed_authors"]["status"], "passed")
+            self.assertEqual(result["reference_coverage"]["punctuation_and_structure"]["status"], "passed")
+
+    def test_reference_profile_reports_author_punctuation_and_marker_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reference-errors.docx"
+            write_docx(
+                path,
+                [
+                    text_paragraph("正文引用［1］、[2]和[3]。"),
+                    text_paragraph("参考文献"),
+                    text_paragraph("［1］ 张三，李四，王五，等。题名［J］。期刊，2024，1（2）：3-4。"),
+                    text_paragraph("[2] A A, B B, C C, D D. English Title[J]. Journal, 2024, 1(2): 3-4."),
+                    text_paragraph("[3] 张三, 李四, 等. 题名[J]. 期刊, 2024, 1(2): 3-4."),
+                    text_paragraph("致谢"),
+                ],
+            )
+            result = check_docx.run_checks(arguments(path))
+            rules = [item["rule_id"] for item in result["findings"]]
+
+            self.assertIn("L54", rules)
+            self.assertIn("L55", rules)
+            self.assertEqual(result["reference_coverage"]["displayed_authors"]["status"], "findings")
+            self.assertEqual(result["reference_coverage"]["punctuation_and_structure"]["status"], "findings")
+
+    def test_reference_linkage_and_wrapped_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reference-linkage.docx"
+            write_docx(
+                path,
+                [
+                    text_paragraph("先引用[2]，再引用[1]。"),
+                    text_paragraph("参考文献"),
+                    text_paragraph("[1] W Y Cha, D S Kim, Y D Lee. Thermodynamic Study [J]. ISIJ"),
+                    text_paragraph("International, 2004, 44(7): 1134-1139."),
+                    text_paragraph("[2] 张三. 论文题名[J]. 冶金学报, 2024, 10(2): 1-9."),
+                    text_paragraph("[3] 李四. 另一题名[J]. 钢铁, 2025, 11(3): 10-18."),
+                    text_paragraph("致谢"),
+                ],
+            )
+            result = check_docx.run_checks(arguments(path))
+            l53 = [item for item in result["findings"] if item["rule_id"] == "L53"]
+            l55 = [item for item in result["findings"] if item["rule_id"] == "L55"]
+
+            self.assertTrue(any("first-citation order" in str(item["message"]) for item in l53))
+            self.assertTrue(any("not cited" in str(item["message"]) for item in l53))
+            self.assertFalse(l55)
+            self.assertEqual(result["summary"]["detected_references"], 3)
 
     def test_keyword_limits_are_configurable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -8,7 +8,8 @@ This repository does not redistribute university or adviser Word documents. User
 
 - Routes full, format-only, equation-only, and content-focused audits.
 - Distinguishes current official rules, unverified official material, user requirements, adviser preferences, and general guidance.
-- Tracks all 56 substantive rows from the legacy self-check through a normalized crosswalk.
+- Tracks 55 retained substantive rows from the self-check; the reference-count row is intentionally excluded.
+- Applies a self-check-first reference profile for author truncation, half-width punctuation, spacing, citation order, and exact element layouts.
 - Inventories native OMML, embedded OLE/MathType, legacy EQ fields, scripted text, media, formula numbers, and formula references.
 - Inventories LaTeX display equations, labels, source references, and nearby `式中`/`其中` blocks.
 - Emits a formula coverage matrix that prevents numbering-only checks from being reported as a complete formula pass.
@@ -64,8 +65,6 @@ Enable only confirmed local requirements explicitly:
 python3 scripts/check_docx.py dissertation.docx \
   --legacy-text-rules \
   --legacy-formula-definition-style \
-  --min-references 60 \
-  --min-foreign-references 20 \
   --equation-separator dash \
   --equation-parentheses halfwidth
 ```
@@ -74,7 +73,7 @@ The same formula-definition flag is available on `inspect_tex_equations.py`. It 
 
 The scripts use only the Python standard library. Layout output distinguishes direct OOXML structure from width/font estimates and rendered confirmation. DOCX does not record automatic table-cell wrapping as an explicit event, so `likely_automatic_wrap` is a review candidate rather than a confirmed formatting defect.
 
-Keyword and reference thresholds are also configurable with `--keyword-min`, `--keyword-max`, `--min-references`, and `--min-foreign-references`. Do not enable a threshold until its current authority is confirmed.
+Keyword limits remain configurable with `--keyword-min` and `--keyword-max`. The checker intentionally has no reference-count or language-proportion threshold.
 
 ## Validate
 
@@ -91,7 +90,7 @@ python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
 
 ## Rule Precedence
 
-Current university and school rules take precedence over program requirements, explicit submission instructions, adviser conventions, legacy examples, and general writing guidance. See `references/source-policy.md` and `references/checklist-crosswalk.md` for details.
+General dissertation rules follow the official-source precedence in `references/source-policy.md`. Reference-format conflicts use the dedicated self-check-first order in `references/reference-audit.md`.
 
 ## License
 

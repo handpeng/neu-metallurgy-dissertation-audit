@@ -18,8 +18,14 @@ import inspect_layout
 
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
 CAPTION_RE = re.compile(r"^(图|表)\s*(\d+)[.\-](\d+)")
-REFERENCE_ENTRY_RE = re.compile(r"^\s*(?:\[(\d+)\]|(\d+)[.、])\s*(.+)")
+REFERENCE_HEADING_RE = re.compile(r"^(?:第\s*\d+\s*章\s*)?参考文献\s*$")
+REFERENCE_ENTRY_RE = re.compile(r"^\s*(?:\[(\d+)\]|［(\d+)］|(\d+)[.、])(\s*)(.+)$")
+REFERENCE_EXACT_PREFIX_RE = re.compile(r"^\[(\d+)\] (?! )(.+)$")
 REFERENCE_END_RE = re.compile(r"^(?:致谢|作者简介|个人简历|攻读学位期间|附录)\s*$")
+REFERENCE_TYPE_RE = re.compile(r"\[([A-Z]+(?:/[A-Z]+)?)\]")
+REFERENCE_CITATION_CANDIDATE_RE = re.compile(r"[\[［【]\s*\d[\d,\-–—\s]*[\]］】]")
+REFERENCE_CITATION_RE = re.compile(r"\[(\d+(?:(?:,|-)\d+)*)\]")
+FULLWIDTH_REFERENCE_PUNCTUATION = frozenset("，。：；！？（）［］【】“”‘’、～—–…％／－＋＝＃＆＠")
 NUMBER_UNIT_RE = re.compile(
     r"(?<![A-Za-z0-9_.])(\d+(?:\.\d+)?)(MPa|GPa|kPa|mg|kg|km|mm|cm|μm|um|mL|L|min|mol|Pa|K|g|m|s|h)(?![A-Za-z])"
 )
@@ -260,10 +266,19 @@ def load_paragraphs(path: Path) -> list[dict[str, object]]:
 
 def scan_text_rules(paragraphs: list[dict[str, object]], legacy_text_rules: bool) -> list[dict[str, object]]:
     findings: list[dict[str, object]] = []
+    in_references = False
     for paragraph in paragraphs:
         index = int(paragraph["paragraph_index"])
         text = str(paragraph["text"])
         if not text:
+            continue
+        stripped = text.strip()
+        if REFERENCE_HEADING_RE.match(stripped):
+            in_references = True
+            continue
+        if in_references and REFERENCE_END_RE.match(stripped):
+            in_references = False
+        elif in_references:
             continue
 
         if "成份" in text:
@@ -587,43 +602,336 @@ def formula_coverage(
     }
 
 
-def scan_references(
-    paragraphs: list[dict[str, object]], min_references: int | None, min_foreign: int | None
-) -> tuple[list[dict[str, object]], dict[str, int | None]]:
-    findings: list[dict[str, object]] = []
-    in_references = False
+def collect_references(
+    paragraphs: list[dict[str, object]],
+) -> tuple[bool, list[dict[str, object]], list[dict[str, object]]]:
     reference_section_found = False
-    entries: list[tuple[int, int, str]] = []
+    in_references = False
+    entries: list[dict[str, object]] = []
+    body: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+
     for paragraph in paragraphs:
         text = str(paragraph["text"]).strip()
-        if not in_references and re.match(r"^参考文献\s*$", text):
+        index = int(paragraph["paragraph_index"])
+        if not in_references and REFERENCE_HEADING_RE.match(text):
             in_references = True
             reference_section_found = True
             continue
-        if in_references and REFERENCE_END_RE.match(text):
+        if not in_references:
+            body.append(paragraph)
+            continue
+        if REFERENCE_END_RE.match(text):
+            if current is not None:
+                entries.append(current)
             break
-        if in_references:
-            match = REFERENCE_ENTRY_RE.match(text)
-            if match:
-                number = int(match.group(1) or match.group(2))
-                entries.append((number, int(paragraph["paragraph_index"]), match.group(3)))
+        if not text:
+            continue
+        match = REFERENCE_ENTRY_RE.match(text)
+        if match:
+            if current is not None:
+                entries.append(current)
+            number = next(int(value) for value in match.groups()[:3] if value is not None)
+            current = {
+                "number": number,
+                "paragraph_index": index,
+                "paragraph_indices": [index],
+                "text": text,
+            }
+        elif current is not None:
+            current["text"] = f"{current['text']} {text}"
+            current["paragraph_indices"].append(index)
 
-    foreign = sum(1 for _, _, text in entries if not CJK_RE.search(text) and re.search(r"[A-Za-z]", text))
+    if in_references and current is not None and (not entries or entries[-1] is not current):
+        entries.append(current)
+    return reference_section_found, entries, body
+
+
+def expand_citation(group: str) -> list[int]:
+    numbers: list[int] = []
+    for part in group.split(","):
+        if "-" in part:
+            start, end = (int(value) for value in part.split("-", 1))
+            if start <= end:
+                numbers.extend(range(start, end + 1))
+            else:
+                numbers.extend((start, end))
+        else:
+            numbers.append(int(part))
+    return numbers
+
+
+def check_reference_entry(entry: dict[str, object]) -> list[dict[str, object]]:
+    findings: list[dict[str, object]] = []
+    raw = str(entry["text"])
+    index = int(entry["paragraph_index"])
+    exact = REFERENCE_EXACT_PREFIX_RE.match(raw)
+    if exact is None:
+        findings.append(
+            finding(
+                "L55", "warning", "deterministic",
+                "The reference entry does not start with half-width `[number]` followed by exactly one space.",
+                "Start the entry with a prefix such as `[1] `.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+        permissive = REFERENCE_ENTRY_RE.match(raw)
+        if permissive is None:
+            return findings
+        content = permissive.group(5)
+    else:
+        content = exact.group(2)
+
+    fullwidth = "".join(sorted({character for character in raw if character in FULLWIDTH_REFERENCE_PUNCTUATION}))
+    if fullwidth:
+        findings.append(
+            finding(
+                "L55", "warning", "deterministic",
+                f"Full-width or non-ASCII reference punctuation was found: `{fullwidth}`.",
+                "Replace bibliographic punctuation, including brackets and parentheses, with the required half-width forms.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+    if not raw.endswith("."):
+        findings.append(
+            finding(
+                "L55", "warning", "deterministic", "The reference entry does not end with a half-width period.",
+                "End the complete entry with `.`.", paragraph_index=index, observed=raw,
+            )
+        )
+
+    if ". " not in content:
+        findings.append(
+            finding(
+                "L55", "warning", "deterministic", "The author block is not followed by exactly `. `.",
+                "End the displayed author block with a half-width period and one ASCII space.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+        return findings
+
+    authors, remainder = content.split(". ", 1)
+    if re.search(r"\s,|,(?! )|, {2,}", authors):
+        findings.append(
+            finding(
+                "L54", "warning", "deterministic", "Author separators are not exactly `, `.",
+                "Separate displayed authors, and the truncation marker, with one half-width comma and one ASCII space.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+    author_parts = authors.split(", ")
+    truncation = author_parts[-1] if author_parts and author_parts[-1] in {"等", "et al"} else None
+    displayed_authors = author_parts[:-1] if truncation else author_parts
+    stray_truncation = re.search(r"(?:^|[,\s])等(?:$|[,\s])|\bet\s+al\.?\b", authors)
+    if stray_truncation and truncation is None:
+        findings.append(
+            finding(
+                "L54", "warning", "deterministic", "The author truncation marker is not exactly `, 等.` or `, et al.`.",
+                "List three authors, then use the exact language-appropriate truncation marker.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+    if truncation and len(displayed_authors) != 3:
+        findings.append(
+            finding(
+                "L54", "warning", "deterministic", f"The `{truncation}` marker follows {len(displayed_authors)} displayed author(s), not three.",
+                "Display exactly the first three authors before the truncation marker.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+    if not truncation and len(displayed_authors) > 3:
+        findings.append(
+            finding(
+                "L54", "warning", "deterministic", "More than three authors are displayed without the required truncation marker.",
+                "Keep the first three authors, then add `, 等.` or `, et al.`.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+    chinese_authors = CJK_RE.search(" ".join(displayed_authors)) is not None
+    if truncation == "et al" and chinese_authors:
+        findings.append(
+            finding(
+                "L54", "warning", "deterministic", "A Chinese author list uses `et al.` instead of `等.`.",
+                "Use `, 等.` after the first three Chinese authors.", paragraph_index=index, observed=raw,
+            )
+        )
+    if truncation == "等" and not chinese_authors:
+        findings.append(
+            finding(
+                "L54", "warning", "deterministic", "A non-Chinese author list uses `等.` instead of `et al.`.",
+                "Use `, et al.` after the first three non-Chinese authors.", paragraph_index=index, observed=raw,
+            )
+        )
+
+    markers = list(REFERENCE_TYPE_RE.finditer(remainder))
+    if not markers:
+        findings.append(
+            finding(
+                "L55", "warning", "deterministic", "No bracketed document-type marker was detected after the title.",
+                "Add the applicable marker, such as `[J]`, `[M]`, or `[D]`, in the required position.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+        return findings
+
+    primary = markers[0]
+    title = remainder[: primary.start()]
+    marker = primary.group(1)
+    if CJK_RE.search(title):
+        marker_spacing_valid = bool(title) and not title.endswith(" ")
+    else:
+        marker_spacing_valid = title.endswith(" ") and not title.endswith("  ")
+    if not marker_spacing_valid:
+        findings.append(
+            finding(
+                "L55", "warning", "deterministic", "The space before the primary document-type marker is incorrect for the title language.",
+                "Attach the marker directly to a Chinese title; place one ASCII space before it after an English title.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+
+    after_marker = remainder[primary.end() :]
+    if not after_marker.startswith(". "):
+        findings.append(
+            finding(
+                "L55", "warning", "deterministic", "The primary document-type marker is not followed by exactly `. `.",
+                "Follow the marker with a half-width period and one ASCII space.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+        return findings
+    tail = after_marker[2:]
+
+    template_valid = True
+    expected = ""
+    if marker == "J":
+        template_valid = re.fullmatch(r".+, \d{4}, \d+\([^)]+\): .+\.", tail) is not None
+        expected = "journal, year, volume(issue): pages."
+    elif marker == "M":
+        template_valid = re.fullmatch(r"[^:]+: .+, \d{4}, .+\.", tail) is not None
+        expected = "place: publisher, year, pages."
+    elif marker == "D":
+        template_valid = re.fullmatch(r"[^:]+: .+, \d{4}\.", tail) is not None
+        expected = "place: degree-awarding institution, year."
+    elif marker == "A":
+        proceedings = re.search(r"\[C\]", tail)
+        template_valid = proceedings is not None
+        if proceedings is not None:
+            proceedings_title = tail[: proceedings.start()]
+            if CJK_RE.search(proceedings_title):
+                template_valid = template_valid and not proceedings_title.endswith(" ")
+            else:
+                template_valid = template_valid and proceedings_title.endswith(" ") and not proceedings_title.endswith("  ")
+            template_valid = template_valid and re.fullmatch(r", .+, \d{4}: .+\.", tail[proceedings.end() :]) is not None
+        expected = "proceedings title[C], publication place, year: pages."
+    if not template_valid:
+        findings.append(
+            finding(
+                "L55", "warning", "deterministic", f"The `{marker}` entry does not match the required element order: {expected}",
+                "Reorder the elements and reproduce the literal separators from `references/reference-audit.md`.",
+                paragraph_index=index, observed=raw,
+            )
+        )
+    return findings
+
+
+def scan_references(
+    paragraphs: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    findings: list[dict[str, object]] = []
+    reference_section_found, entries, body = collect_references(paragraphs)
+    for entry in entries:
+        findings.extend(check_reference_entry(entry))
+
     if entries:
-        actual = [number for number, _, _ in entries]
+        actual = [int(entry["number"]) for entry in entries]
         expected = list(range(1, len(entries) + 1))
         if actual != expected:
             findings.append(
-                finding("L53", "warning", "deterministic", "Reference-list numbering is not a continuous first-to-last sequence.", "Renumber entries and refresh in-text citations.", paragraph_index=entries[0][1], observed=str(actual[:20]))
+                finding("L53", "warning", "deterministic", "Reference-list numbering is not a continuous first-to-last sequence.", "Renumber entries and refresh in-text citations.", paragraph_index=int(entries[0]["paragraph_index"]), observed=str(actual[:20]))
             )
-    if min_references is not None and len(entries) < min_references:
-        findings.append(finding("L57", "review", "deterministic", f"Detected {len(entries)} references, below the configured minimum of {min_references}.", "Confirm reference extraction and the current program threshold."))
-    if min_foreign is not None and foreign < min_foreign:
-        findings.append(finding("L57", "review", "semantic", f"Detected approximately {foreign} foreign-language references, below the configured minimum of {min_foreign}.", "Verify language classification manually and confirm the program threshold.", confidence="medium"))
+
+    citation_order: list[int] = []
+    seen_citations: set[int] = set()
+    for paragraph in body:
+        text = str(paragraph["text"])
+        index = int(paragraph["paragraph_index"])
+        for candidate in REFERENCE_CITATION_CANDIDATE_RE.findall(text):
+            exact = REFERENCE_CITATION_RE.fullmatch(candidate)
+            if exact is None:
+                findings.append(
+                    finding(
+                        "L55", "warning", "deterministic", "An in-text numeric citation does not use exact half-width brackets, commas, hyphens, and no internal spaces.",
+                        "Use forms such as `[1]`, `[10,24]`, or `[3-4]`.",
+                        paragraph_index=index, observed=candidate,
+                    )
+                )
+                continue
+            for number in expand_citation(exact.group(1)):
+                if number not in seen_citations:
+                    seen_citations.add(number)
+                    citation_order.append(number)
+
+    if citation_order:
+        expected_order = list(range(1, len(citation_order) + 1))
+        if citation_order != expected_order:
+            findings.append(
+                finding(
+                    "L53", "warning", "deterministic", "Reference numbers do not follow first-citation order.",
+                    "Renumber the first appearances and synchronize the reference list.",
+                    observed=str(citation_order[:30]),
+                )
+            )
+        entry_numbers = {int(entry["number"]) for entry in entries}
+        missing_entries = sorted(seen_citations - entry_numbers)
+        uncited_entries = sorted(entry_numbers - seen_citations)
+        if missing_entries:
+            findings.append(
+                finding(
+                    "L53", "warning", "deterministic", "In-text citations have no matching reference-list entry.",
+                    "Add or correct the referenced entries and refresh citation fields.", observed=str(missing_entries),
+                )
+            )
+        if uncited_entries:
+            findings.append(
+                finding(
+                    "L53", "warning", "deterministic", "Reference-list entries were not cited in the inspected body text.",
+                    "Cite each retained entry or remove it after confirming field results and appendices.", observed=str(uncited_entries), confidence="medium",
+                )
+            )
+    elif entries:
+        findings.append(
+            finding(
+                "L53", "review", "manual", "No in-text numeric citations were detected for the reference list.",
+                "Check field results, text boxes, footnotes, and appendices before concluding that the entries are uncited.", confidence="medium",
+            )
+        )
+
     return findings, {
         "reference_section_found": reference_section_found,
         "detected_references": len(entries),
-        "estimated_foreign_references": foreign if entries else None,
+        "detected_in_text_citations": len(seen_citations),
+        "first_citation_order": citation_order,
+        "reference_profile": "self-check-first",
+    }
+
+
+def reference_coverage(
+    summary: dict[str, object], findings: list[dict[str, object]],
+) -> dict[str, dict[str, str]]:
+    reference_rules = {"L53", "L54", "L55", "L56"}
+    relevant = [item for item in findings if item["rule_id"] in reference_rules]
+    author_findings = any(item["rule_id"] == "L54" for item in relevant)
+    structure_findings = any(item["rule_id"] == "L55" for item in relevant)
+    linkage_findings = any(item["rule_id"] == "L53" for item in relevant)
+    section_status = "passed" if summary["reference_section_found"] else "findings"
+    return {
+        "section_inventory": {"status": section_status, "detail": "The reference heading and numbered entries were inventoried."},
+        "numbering_and_linkage": {"status": "findings" if linkage_findings else "passed", "detail": "List continuity, first-citation order, and citation/list coverage were checked from visible DOCX text."},
+        "displayed_authors": {"status": "findings" if author_findings else "passed", "detail": "Displayed author count, separators, and exact `等`/`et al.` syntax were checked; source metadata still requires review."},
+        "punctuation_and_structure": {"status": "findings" if structure_findings else "passed", "detail": "Half-width punctuation, spaces, type-marker positions, and supported entry layouts were checked."},
+        "capitalization_and_metadata": {"status": "manual-review", "detail": "English capitalization semantics, author completeness, titles, dates, DOI, URL, and publication metadata require source comparison."},
+        "rendering_layout": {"status": "manual-review", "detail": "Superscript citations, fonts, hanging indents, line starts, and page rendering require Word inspection."},
     }
 
 
@@ -656,7 +964,7 @@ def check_keyword_limits(
 
 
 def run_checks(args: argparse.Namespace) -> dict[str, object]:
-    for name in ("min_references", "min_foreign_references", "keyword_min", "keyword_max"):
+    for name in ("keyword_min", "keyword_max"):
         value = getattr(args, name)
         if value is not None and value < 0:
             raise ValueError(f"{name.replace('_', '-')} must be non-negative")
@@ -673,7 +981,7 @@ def run_checks(args: argparse.Namespace) -> dict[str, object]:
     strict_definition_style = bool(getattr(args, "legacy_formula_definition_style", False))
     definition_findings = scan_formula_definition_style(inspection) if strict_definition_style else []
     findings.extend(definition_findings)
-    reference_findings, reference_summary = scan_references(paragraphs, args.min_references, args.min_foreign_references)
+    reference_findings, reference_summary = scan_references(paragraphs)
     findings.extend(reference_findings)
     keyword_summary = inspect_keywords(paragraphs)
     findings.extend(check_keyword_limits(keyword_summary, args.keyword_min, args.keyword_max))
@@ -688,8 +996,6 @@ def run_checks(args: argparse.Namespace) -> dict[str, object]:
             "legacy_formula_definition_style": strict_definition_style,
             "equation_separator": args.equation_separator,
             "equation_parentheses": args.equation_parentheses,
-            "min_references": args.min_references,
-            "min_foreign_references": args.min_foreign_references,
             "keyword_min": args.keyword_min,
             "keyword_max": args.keyword_max,
         },
@@ -707,6 +1013,7 @@ def run_checks(args: argparse.Namespace) -> dict[str, object]:
         "formula_coverage": formula_coverage(
             inspection, equation_findings, definition_findings, strict_definition_style
         ),
+        "reference_coverage": reference_coverage(reference_summary, reference_findings),
         "layout": layout,
         "findings": findings,
         "manual_checks": [
@@ -715,7 +1022,7 @@ def run_checks(args: argparse.Namespace) -> dict[str, object]:
             "Rendered confirmation of estimated table wrapping, column balance, clipping, caption pairing, borders, and whitespace",
             "Equation centering, typography, OLE/image content, and symbol-definition closure",
             "Abstract completeness, contribution claims, and academic-content quality",
-            "Citation metadata and citation-style conformance",
+            "Reference capitalization semantics, source metadata, DOI/URL accuracy, superscript placement, fonts, and hanging indents",
         ],
     }
 
@@ -730,8 +1037,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="check the legacy `式中，` next-paragraph indentation and symbol-delimiter convention",
     )
-    parser.add_argument("--min-references", type=int, help="confirmed minimum reference count")
-    parser.add_argument("--min-foreign-references", type=int, help="confirmed minimum foreign-language reference count")
     parser.add_argument("--keyword-min", type=int, help="confirmed minimum keyword count")
     parser.add_argument("--keyword-max", type=int, help="confirmed maximum keyword count")
     parser.add_argument("--equation-separator", choices=("any", "dot", "dash"), default="any")

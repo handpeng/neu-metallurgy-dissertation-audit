@@ -9,7 +9,7 @@ Audit dissertations without overstating what the available rules or file format 
 
 ## Establish The Rule Set
 
-Read [references/source-policy.md](references/source-policy.md) before every audit. Resolve the applicable degree, school, template version, citation standard, and user-specified exceptions. If a current authoritative source is unavailable, label the audit provisional instead of silently treating the legacy checklist as binding.
+Read [references/source-policy.md](references/source-policy.md) before every audit. Resolve the applicable degree, school, template version, citation standard, and user-specified exceptions. Apply its dedicated reference-format precedence separately from the general dissertation-rule precedence.
 
 For a full audit or a request to reproduce the legacy self-check, also read [references/checklist-crosswalk.md](references/checklist-crosswalk.md). It records every substantive checklist item, its status, and the appropriate inspection method.
 
@@ -17,6 +17,7 @@ For a full audit or a request to reproduce the legacy self-check, also read [ref
 
 - For a full audit, read all references below.
 - For structure, typography, figures, tables, units, or references, read [references/format-audit.md](references/format-audit.md).
+- For any reference-list or in-text citation audit, also read [references/reference-audit.md](references/reference-audit.md). It defines the binding author, punctuation, spacing, element-order, and source-precedence profile.
 - For image placement, standalone image cells, table widths, column proportions, cell wrapping, or layout modification feasibility, also read [references/layout-audit.md](references/layout-audit.md).
 - For any formula, equation, symbol, derivation, or mathematical-notation request, read [references/equation-audit.md](references/equation-audit.md).
 - For argument, novelty, methods, evidence, discussion, abstract, or doctoral-level quality, read [references/content-audit.md](references/content-audit.md).
@@ -39,7 +40,7 @@ Run the conservative deterministic checker for a full DOCX audit:
 python3 scripts/check_docx.py /path/to/dissertation.docx
 ```
 
-Use its optional legacy thresholds or notation flags only after the applicable source is confirmed. Findings from this checker are candidates with evidence and confidence, not a substitute for semantic or rendered-page review.
+The checker applies the repository's self-check-first reference profile by default. Use optional notation flags only after the applicable source is confirmed. Findings are evidence-backed candidates, not a substitute for metadata, semantic, or rendered-page review.
 
 For LaTeX input, inventory supported display environments, labels, references, and nearby definition blocks without modifying the source:
 

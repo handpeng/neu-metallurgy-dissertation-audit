@@ -42,11 +42,11 @@ Check the current required keyword count before enforcing the legacy `3-5` range
 
 ## References
 
-Determine the required citation standard and variant before checking punctuation or capitalization. Check citation-to-entry and entry-to-citation coverage, sequence, duplicates, missing fields, author truncation, document type, DOI or URL consistency, dates, and obvious metadata contradictions.
+Read [reference-audit.md](reference-audit.md) and apply its self-check-first profile. Check citation-to-entry and entry-to-citation coverage, first-citation order, duplicates, missing fields, author truncation, document type, DOI or URL consistency, dates, and obvious metadata contradictions.
 
-Where the confirmed style requires it, check the exact author threshold, `等` or `et al.` form, separator spacing, bracket width, terminal punctuation, and English title or source-name capitalization. Do not combine punctuation examples from the legacy list with a different GB/T 7714 implementation.
+Check the literal author threshold, `等` or `et al.` form, separator spacing, bracket width, terminal punctuation, type-marker position, and element order. Use half-width reference punctuation as specified by the first-priority self-check; do not import the conflicting full-width punctuation shown by lower-priority examples.
 
-Treat legacy minimum counts such as 60 total and 20 foreign-language references as program-specific until confirmed. Counts do not establish relevance, quality, currency, or adequate coverage.
+Do not audit a minimum reference count or a foreign-language proportion. Assess relevance, quality, currency, and coverage semantically instead.
 
 ## Automation Boundary
 

@@ -1,6 +1,6 @@
 # Legacy Checklist Crosswalk
 
-This crosswalk covers the 56 substantive rows in `2 论文格式自审查要点-改正稿.docx`. It preserves traceability without treating a master's/adviser checklist as a current doctoral regulation.
+This crosswalk retains 55 substantive rows from `2 论文格式自审查要点-改正稿.docx`. The reference-count row is intentionally excluded. The reference-format rows are binding under the project-specific precedence in `source-policy.md`; other rows retain the dispositions below.
 
 Status meanings:
 
@@ -65,10 +65,9 @@ Methods are `D` deterministic, `S` semantic, `V` visual, and `M` manual.
 | L51 | Both endpoints of a percentage range carry `%` when required | apply | D |
 | L52 | Short `见图/见表` sentences use the required terminal punctuation | confirm | D/S |
 | L53 | Numeric references follow first-citation order | apply | D |
-| L54 | Author truncation, separators, and `等`/`et al.` follow the selected citation style | confirm | D/S |
-| L55 | Reference punctuation and bracket width follow the selected citation style | confirm | D |
-| L56 | English title and source capitalization is consistent with the selected citation style | confirm | D/S |
-| L57 | Enforce 60 total and 20 foreign-language references only when the program confirms those thresholds | confirm | D |
+| L54 | List up to three authors; for four or more list three followed exactly by `, 等.` or `, et al.` | apply | D/S |
+| L55 | Reference brackets, punctuation, spaces, type-marker positions, and element order follow the half-width profile | apply | D |
+| L56 | English title and source capitalization is internally consistent | apply | D/S |
 
 ## Appended Common-Error Notes
 

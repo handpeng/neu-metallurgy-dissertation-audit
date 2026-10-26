@@ -14,6 +14,7 @@ class SkillLayoutTests(unittest.TestCase):
         self.assertTrue(skill.startswith("---\nname: neu-metallurgy-dissertation-audit\n"))
         self.assertNotIn("TODO", skill)
         self.assertIn("references/layout-audit.md", skill)
+        self.assertIn("references/reference-audit.md", skill)
         self.assertIn("scripts/inspect_layout.py", skill)
         self.assertIn("scripts/inspect_tex_equations.py", skill)
         self.assertIn("formula coverage matrix", skill.lower())
@@ -27,10 +28,25 @@ class SkillLayoutTests(unittest.TestCase):
                 target = relative.split("#", 1)[0]
                 self.assertTrue((markdown.parent / target).exists(), f"{markdown}: {relative}")
 
-    def test_crosswalk_has_every_substantive_row(self) -> None:
+    def test_crosswalk_has_every_retained_substantive_row(self) -> None:
         crosswalk = (ROOT / "references" / "checklist-crosswalk.md").read_text(encoding="utf-8")
         found = {int(value) for value in re.findall(r"\| L(\d{2}) \|", crosswalk)}
-        self.assertEqual(found, set(range(2, 58)))
+        self.assertEqual(found, set(range(2, 57)))
+
+    def test_reference_count_threshold_is_absent(self) -> None:
+        checked = [
+            ROOT / "SKILL.md",
+            ROOT / "README.md",
+            ROOT / "references" / "source-policy.md",
+            ROOT / "references" / "format-audit.md",
+            ROOT / "references" / "checklist-crosswalk.md",
+            ROOT / "references" / "reference-audit.md",
+            ROOT / "scripts" / "check_docx.py",
+        ]
+        content = "\n".join(path.read_text(encoding="utf-8") for path in checked)
+        self.assertNotIn("min-references", content)
+        self.assertNotIn("min-foreign-references", content)
+        self.assertNotIn("L57", content)
 
 
 if __name__ == "__main__":
